@@ -1,4 +1,4 @@
-# Multicore t-SNE
+# Multicore t-SNE [![Build Status](https://travis-ci.org/DmitryUlyanov/Multicore-TSNE.svg?branch=master)](https://travis-ci.org/DmitryUlyanov/Multicore-TSNE)
 
 This is a multicore modification of [Barnes-Hut t-SNE](https://github.com/lvdmaaten/bhtsne) by L. Van der Maaten with python and Torch CFFI-based wrappers. This code also works **faster than sklearn.TSNE** on 1 core.
 
@@ -49,23 +49,20 @@ Python and torch wrappers are available.
 ## Python
 ### Install
 
-Make sure `cmake` is installed on your system.
+Make sure `cmake` is installed on your system, and you will also need a sensible C++ compiler, such as `gcc` or `llvm-clang`. On macOS, you can get both via [homebrew](https://brew.sh/).
 
-To install the package please do:
+To install the package, please do:
 ```
 git clone https://github.com/DmitryUlyanov/Multicore-TSNE.git
 cd Multicore-TSNE/
-pip install --no-cache-dir .
+pip install .
 ```
 
-It's important that you add `--no-cache-dir` otherwise pip won't copy
-the `.so` file which is needed at runtime.
-
-Tested with both Python 2.7 and 3.6 (conda) and Ubuntu 14.04. Never tested on MacOS, something similar to [this](https://github.com/RobeDM/LIBIRWLS#compiling-1) should be done for successful compilation. Also read this [issue](https://github.com/DmitryUlyanov/Multicore-TSNE/issues/1).
+Tested with both Python 2.7 and 3.6 (conda) and Ubuntu 14.04.
 
 ### Run
 
-You can use it as a drop-in replacement for [sklearn.manifold.TSNE](http://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.htm).
+You can use it as a near drop-in replacement for [sklearn.manifold.TSNE](http://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.html).
 
 ```
 from MulticoreTSNE import MulticoreTSNE as TSNE
@@ -76,18 +73,14 @@ Y = tsne.fit_transform(X)
 
 Please refer to [sklearn TSNE manual](http://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.html) for parameters explanation.
 
-Only double arrays are supported for now. For this implementation `n_components` is fixed to `2`, which is the most common case (use [Barnes-Hut t-SNE](https://github.com/lvdmaaten/bhtsne) or sklearn otherwise). Also note that some of the parameters will be ignored for sklearn compatibility. Only these parameters are used (and they are the most important ones):
-
-- perplexity
-- n_iter
-- angle
+This implementation `n_components=2`, which is the most common case (use [Barnes-Hut t-SNE](https://github.com/lvdmaaten/bhtsne) or sklearn otherwise). Also note that some parameters are there just for the sake of compatibility with sklearn and are otherwise ignored. See `MulticoreTSNE` class docstring for more info.
 
 ### Test
 
 You can test it on MNIST dataset with the following command:
 
 ```
-python python/tests/test.py <n_jobs>
+python MulticoreTSNE/examples/test.py <n_jobs>
 ```
 
 #### Note on jupyter use
@@ -134,11 +127,11 @@ Please cite this repository if it was useful for your research:
 ```
 @misc{Ulyanov2016,
   author = {Ulyanov, Dmitry},
-  title = {Muticore-TSNE},
+  title = {Multicore-TSNE},
   year = {2016},
   publisher = {GitHub},
   journal = {GitHub repository},
-  howpublished = {\url{https://github.com/DmitryUlyanov/Muticore-TSNE}},
+  howpublished = {\url{https://github.com/DmitryUlyanov/Multicore-TSNE}},
 }
 ```
 

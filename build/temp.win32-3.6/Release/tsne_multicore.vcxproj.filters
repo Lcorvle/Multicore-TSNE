@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Lcorvle\Desktop\laboratory\Multicore-TSNE\multicore_tsne\splittree.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Lcorvle\Desktop\laboratory\Multicore-TSNE\multicore_tsne\tsne.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Lcorvle\Desktop\laboratory\Multicore-TSNE\multicore_tsne\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{A807DFB4-EB6C-37B1-8BAA-6811B8BA4240}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
