@@ -37,9 +37,6 @@ class MulticoreTSNE:
     
     When `cheat_metric` is true squared equclidean distance is used to build VPTree. 
     Usually leads to same quality, yet much faster.
-
-    Parameter `init` doesn't support 'pca' initialization, but a precomputed
-    array can be passed.
     """
     def __init__(self,
                  n_components=2,
@@ -66,7 +63,7 @@ class MulticoreTSNE:
         self.learning_rate = learning_rate
         self.n_iter = n_iter
         self.n_jobs = n_jobs
-        self.random_state = -1 if random_state is None else random_state
+        self.random_state = int(np.random.random() * 1000) if random_state is None else random_state
         self.init = init
         self.embedding_ = None
         self.n_iter_ = None
@@ -88,9 +85,10 @@ class MulticoreTSNE:
                                     int num_threads, int max_iter, int random_state,
                                     bool init_from_Y, int verbose,
                                     double early_exaggeration, double learning_rate,
-                                    double *final_error, int distance);""")
+                                    double *final_error, int distance, int skip_num_points, int skip_iter);""")
 
         path = os.path.dirname(os.path.realpath(__file__))
+
         try:
             sofile = (glob(os.path.join(path, 'libtsne*.so')) +
                       glob(os.path.join(path, '*tsne*.dll')))[0]
@@ -102,7 +100,11 @@ class MulticoreTSNE:
         self.fit_transform(X, y)
         return self
 
-    def fit_transform(self, X, _y=None):
+    def fit_transform(self, X, _y=None, skip_num_points=0, skip_iter=0, init_for_skip=None):
+        if skip_num_points < 0:
+            skip_num_points = 0
+        if skip_iter < 0:
+            skip_iter = 0
 
         assert X.ndim == 2, 'X should be 2D array.'
 
@@ -110,6 +112,15 @@ class MulticoreTSNE:
         X = np.array(X, dtype=float, order='C', copy=True)
 
         N, D = X.shape
+
+        if skip_num_points > N:
+            skip_num_points = N
+        if skip_iter > self.n_iter:
+            skip_iter = self.n_iter
+
+        if skip_num_points > 0:
+            assert isinstance(init_for_skip, np.ndarray), 'init_for_skip should be 2D array.'
+            assert init_for_skip.shape == (skip_num_points, self.n_components), 'init_for_skip\'s shape should be ' + str((skip_num_points, self.n_components))
 
         Y = X.copy()
         if self.use_pca:
@@ -127,7 +138,6 @@ class MulticoreTSNE:
             eig_vec = np.real(eig_vec[:, :initial_dims])
             X = np.dot(X, eig_vec)
         N, D = X.shape
-
         init_from_Y = isinstance(self.init, np.ndarray)
         if init_from_Y:
             Y = self.init.copy('C')
@@ -149,6 +159,8 @@ class MulticoreTSNE:
             eig_vec = np.real(eig_vec[:, :initial_dims])
             Y = np.dot(Y, eig_vec)
             init_from_Y = True
+        if skip_num_points > 0:
+            Y[0:skip_num_points,:] = init_for_skip
 
         cffi_X = self.ffi.cast('double*', X.ctypes.data)
         cffi_Y = self.ffi.cast('double*', Y.ctypes.data)
@@ -160,7 +172,7 @@ class MulticoreTSNE:
                        cffi_Y, self.n_components,
                        self.perplexity, self.angle, self.n_jobs, self.n_iter, self.random_state,
                        init_from_Y, self.verbose, self.early_exaggeration, self.learning_rate,
-                       cffi_final_error, int(self.cheat_metric))
+                       cffi_final_error, int(self.cheat_metric), skip_num_points, skip_iter)
         t.daemon = True
         t.start()
 
@@ -173,3 +185,58 @@ class MulticoreTSNE:
         self.n_iter_ = self.n_iter
 
         return Y
+
+    def get_nearest_neighbor(self):
+        pass
+
+
+class WeightAssign:
+    """
+    Assign weight of source data to target data
+    """
+    def __init__(self,
+                 assign_neighbor_number=1):
+        self.assign_neighbor_number = assign_neighbor_number
+        assert assign_neighbor_number > 0, "assign_neighbor_number must be larger than 0"
+
+        self.ffi = cffi.FFI()
+        self.ffi.cdef(
+            """void assign_weight_to_nearest_neighbors(double* source_X, int source_N, double* target_X, int target_N,
+                                int D, int assign_neighbor_number, double* weight);""")
+
+        path = os.path.dirname(os.path.realpath(__file__))
+
+        try:
+            sofile = (glob(os.path.join(path, 'libtsne*.so')) +
+                      glob(os.path.join(path, '*tsne*.dll')))[0]
+            self.C = self.ffi.dlopen(os.path.join(path, sofile))
+        except (IndexError, OSError):
+            raise RuntimeError('Cannot find/open tsne_multicore shared library')
+
+    def assign(self, source_data, target_data):
+        assert isinstance(source_data, np.ndarray), 'source_data should be 2D array.'
+        assert isinstance(target_data, np.ndarray), 'target_data should be 2D array.'
+        source_number, source_D = source_data.shape
+        target_number, target_D = target_data.shape
+        assert source_D == target_D, 'source_data and target_data should be same dim.'
+        assert source_number > 0, 'source_data should not be null.'
+        assert target_number > 0, 'target_data should not be null.'
+
+        weight = np.zeros((target_number, ))
+
+        cffi_source_data = self.ffi.cast('double*', source_data.ctypes.data)
+        cffi_target_data = self.ffi.cast('double*', target_data.ctypes.data)
+        cffi_weight = self.ffi.cast('double*', weight.ctypes.data)
+
+        t = FuncThread(self.C.assign_weight_to_nearest_neighbors,
+                       cffi_source_data, source_number, cffi_target_data,
+                       target_number, source_D, self.assign_neighbor_number,
+                       cffi_weight)
+        t.daemon = True
+        t.start()
+
+        while t.is_alive():
+            t.join(timeout=1.0)
+            sys.stdout.flush()
+
+        return weight
