@@ -33,6 +33,47 @@
 #endif
 
 
+/*
+    Assign weight
+        source_X -- double matrix of size [source_N, D]
+        source_N -- number of source data points
+        target_X -- double matrix of size [target_N, D]
+        target_N -- number of target data points
+        D -- input dimensionality
+        weight -- array to fill with the result of size [target_N]
+*/template <class treeT, double (*dist_fn)( const DataPoint&, const DataPoint&)>
+void TSNE<treeT, dist_fn>::assign_weight(double* source_X, int source_N, double* target_X, int target_N, int D, int assign_neighbor_number, double* weight) {
+    // Build ball tree on data set
+    VpTree<DataPoint, dist_fn>* target_tree = new VpTree<DataPoint, dist_fn>();
+    std::vector<DataPoint> source_obj_X(source_N, DataPoint(D, -1, source_X));
+    for (int n = 0; n < source_N; n++) {
+        source_obj_X[n] = DataPoint(D, n, source_X + n * D);
+    }
+    std::vector<DataPoint> target_obj_X(target_N, DataPoint(D, -1, target_X));
+    for (int n = 0; n < target_N; n++) {
+        target_obj_X[n] = DataPoint(D, n, target_X + n * D);
+    }
+
+    target_tree->create(target_obj_X);
+
+    for (int i = 0; i < assign_neighbor_number; i++) {
+        weight[i] = 0.0;
+    }
+
+    std::vector<DataPoint> indices;
+    std::vector<double> distances;
+    for (int n = 0; n < source_N; n++) {
+        indices.clear();
+        distances.clear();
+        // Find nearest neighbors
+        target_tree->search(source_obj_X[n], target_N, &indices, &distances);
+        for (int i = 0; i < assign_neighbor_number; i++) {
+            weight[indices[i].index()] += 1.0 / assign_neighbor_number;
+        }
+    }
+    return;
+}
+
 /*  
     Perform t-SNE
         X -- double matrix of size [N, D]
@@ -46,7 +87,7 @@ void TSNE<treeT, dist_fn>::run(double* X, int N, int D, double* Y,
                int num_threads, int max_iter, int random_state,
                bool init_from_Y, int verbose,
                double early_exaggeration, double learning_rate,
-               double *final_error) {
+               double *final_error, int skip_num_points, int skip_iter) {
 
     if (N - 1 < 3 * perplexity) {
         perplexity = (N - 1) / 3;
@@ -134,13 +175,10 @@ void TSNE<treeT, dist_fn>::run(double* X, int N, int D, double* Y,
 
     // Initialize solution (randomly), unless Y is already initialized
     if (!init_from_Y) {
-        stop_lying_iter = 0;  // Immediately stop lying. Passed Y is close to the true solution.
-    }
-    else {
         if (random_state != -1) {
             srand(random_state);
         }
-        for (int i = 0; i < N * no_dims; i++) {
+        for (int i = skip_num_points * no_dims; i < N * no_dims; i++) {
             Y[i] = randn();
         }
     }
@@ -153,14 +191,25 @@ void TSNE<treeT, dist_fn>::run(double* X, int N, int D, double* Y,
 
         // Compute approximate gradient
         double error = computeGradient(row_P, col_P, val_P, Y, N, no_dims, dY, theta, need_eval_error);
+        if (iter < skip_iter) {
+            for (int i = skip_num_points * no_dims; i < N * no_dims; i++) {
+                // Update gains
+                gains[i] = (sign(dY[i]) != sign(uY[i])) ? (gains[i] + .2) : (gains[i] * .8 + .01);
 
-        for (int i = 0; i < N * no_dims; i++) {
-            // Update gains
-            gains[i] = (sign(dY[i]) != sign(uY[i])) ? (gains[i] + .2) : (gains[i] * .8 + .01);
+                // Perform gradient update (with momentum and gains)
+                uY[i] = momentum * uY[i] - eta * gains[i] * dY[i];
+                Y[i] = Y[i] + uY[i];
+            }
+        }
+        else {
+            for (int i = 0; i < N * no_dims; i++) {
+                // Update gains
+                gains[i] = (sign(dY[i]) != sign(uY[i])) ? (gains[i] + .2) : (gains[i] * .8 + .01);
 
-            // Perform gradient update (with momentum and gains)
-            uY[i] = momentum * uY[i] - eta * gains[i] * dY[i];
-            Y[i] = Y[i] + uY[i];
+                // Perform gradient update (with momentum and gains)
+                uY[i] = momentum * uY[i] - eta * gains[i] * dY[i];
+                Y[i] = Y[i] + uY[i];
+            }
         }
 
         // Make solution zero-mean
@@ -604,19 +653,31 @@ extern "C"
                                 int num_threads = 1, int max_iter = 1000, int random_state = -1,
                                 bool init_from_Y = false, int verbose = 0,
                                 double early_exaggeration = 12, double learning_rate = 200,
-                                double *final_error = NULL, int distance = 1)
+                                double *final_error = NULL, int distance = 1, int skip_num_points = 0,
+                                int skip_iter = 0)
     {
         if (verbose)
             fprintf(stderr, "Performing t-SNE using %d cores.\n", NUM_THREADS(num_threads));
         if (distance == 0) {
             TSNE<SplitTree, euclidean_distance> tsne;
             tsne.run(X, N, D, Y, no_dims, perplexity, theta, num_threads, max_iter, random_state,
-                     init_from_Y, verbose, early_exaggeration, learning_rate, final_error);
+                     init_from_Y, verbose, early_exaggeration, learning_rate, final_error, skip_num_points, skip_iter);
         }
         else {
             TSNE<SplitTree, euclidean_distance_squared> tsne;
             tsne.run(X, N, D, Y, no_dims, perplexity, theta, num_threads, max_iter, random_state,
-                     init_from_Y, verbose, early_exaggeration, learning_rate, final_error);
+                     init_from_Y, verbose, early_exaggeration, learning_rate, final_error, skip_num_points, skip_iter);
         }
+    }
+
+    #ifdef _WIN32
+    __declspec(dllexport)
+    #endif
+    extern void assign_weight_to_nearest_neighbors(double* source_X, int source_N, double* target_X, int target_N,
+                                int D, int assign_neighbor_number, double* weight)
+    {
+        TSNE<SplitTree, euclidean_distance_squared> tsne;
+        tsne.assign_weight(source_X, source_N, target_X, target_N, D, assign_neighbor_number, weight);
+        return;
     }
 }
