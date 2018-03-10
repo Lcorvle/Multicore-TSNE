@@ -59,9 +59,9 @@ def plot(Y, classes, name):
     for d in digits:
         idx = classes == d
         if Y.shape[1] == 1:
-            ax.plot(Y[idx], np.random.randn(Y[idx].shape[0]), 'o')
+            ax.scatter(Y[idx], np.random.randn(Y[idx].shape[0]), s=6)
         else:
-            ax.plot(Y[idx, 0], Y[idx, 1], 'o')
+            ax.scatter(Y[idx, 0], Y[idx, 1], s=6)
         
         labels.append(d)
     ax.legend(labels, numpoints=1, fancybox=True)
@@ -69,18 +69,58 @@ def plot(Y, classes, name):
     if Y.shape[1] > 2:
         print('Warning! Plot shows only first two components!')
 
+def random_select(source_number, target_number):
+    import random
+    select = [False] * source_number
+    count = 0
+    while count < target_number:
+        index = int(random.random() * (source_number - 1))
+        if select[index]:
+            continue
+        count += 1
+        select[index] = True
+    return select
 
 ################################################################
+def pre_main():
+    mnist, classes = get_mnist()
 
-mnist, classes = get_mnist()
+    n_objects = 5000
+    target_number = 2000
 
-if args.n_objects != -1:
-    mnist = mnist[:args.n_objects]
-    classes = classes[:args.n_objects]
+    mnist = mnist[:n_objects]
+    classes = classes[:n_objects]
 
-tsne = TSNE(n_jobs=int(args.n_jobs), verbose=1, n_components=args.n_components, random_state=660)
-mnist_tsne = tsne.fit_transform(mnist)
+    # if args.n_objects != -1:
+    #     mnist = mnist[:args.n_objects]
+    #     classes = classes[:args.n_objects]
 
-filename = 'mnist_tsne_n_comp=%d.png' % args.n_components
-plot(mnist_tsne, classes, filename)
-print('Plot saved to %s' % filename)
+    # tsne = TSNE(n_jobs=int(args.n_jobs), verbose=1, n_components=args.n_components, random_state=660)
+    selection = random_select(n_objects, target_number)
+    sample_X = mnist[selection]
+    sample_label = classes[selection]
+    total_X = np.zeros(mnist.shape)
+    total_X[:target_number, :] = mnist[selection]
+    total_X[target_number:, :] = mnist[[not x for x in selection]]
+    total_label = np.zeros(classes.shape)
+    total_label[:target_number] = classes[selection]
+    total_label[target_number:] = classes[[not x for x in selection]]
+    tsne = TSNE(n_jobs=16, verbose=1, n_components=2, random_state=660, init='pca')
+    sample_Y = tsne.fit_transform(sample_X)
+    plot(sample_Y, sample_label, 'sample.png')
+    # np.savetxt('sample_Y.txt', sample_Y)
+    total_Y = tsne.fit_transform(total_X, skip_num_points=target_number, skip_iter=600, init_for_skip=sample_Y)
+    plot(total_Y, total_label, 'total.png')
+
+    # filename = 'mnist_tsne_n_comp=%d.png' % args.n_components
+    # np.savetxt('pos.txt', mnist_tsne)
+    # plot(mnist_tsne, classes, filename)
+    # print('Plot saved to %s' % filename)
+
+
+
+from MulticoreTSNE import WeightAssign as wa
+a = np.array([[0,0,0],[1,1,1],[2,2,2],[3,3,3.0]])
+b = np.array([[0,0,1],[3,3,4.0]])
+c = wa(1)
+c.assign(a, b)
