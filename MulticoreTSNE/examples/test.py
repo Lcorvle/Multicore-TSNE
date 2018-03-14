@@ -6,7 +6,7 @@ from cycler import cycler
 import urllib
 import os
 import sys
-from MulticoreTSNE import MulticoreTSNE as TSNE
+from sklearn.manifold import TSNE
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -84,7 +84,8 @@ def random_select(source_number, target_number):
 ################################################################
 def pre_main():
     mnist, classes = get_mnist()
-
+    np.savez('mnist', X = mnist, Y = classes)
+    exit(1)
     n_objects = 5000
     target_number = 2000
 
@@ -105,12 +106,24 @@ def pre_main():
     total_label = np.zeros(classes.shape)
     total_label[:target_number] = classes[selection]
     total_label[target_number:] = classes[[not x for x in selection]]
-    tsne = TSNE(n_jobs=16, verbose=1, n_components=2, random_state=660, init='pca')
-    sample_Y = tsne.fit_transform(sample_X)
+    
+    incremental_tsne = incre_tsne(n_jobs=16, verbose=1, n_components=2, random_state=660, init='pca', cheat_metric=False)
+    sklearn_tsne = TSNE(verbose=1, n_components=2, random_state=660, init='pca')
+    
+    sample_Y = incremental_tsne.fit_transform(sample_X)
+    sklearn_sample_Y = sklearn_tsne.fit_transform(sample_X)
+
     plot(sample_Y, sample_label, 'sample.png')
+    plot(sklearn_sample_Y, sample_label, 'sklearn-sample.png')
+    
     # np.savetxt('sample_Y.txt', sample_Y)
-    total_Y = tsne.fit_transform(total_X, skip_num_points=target_number, skip_iter=600, init_for_skip=sample_Y)
+    total_Y = incremental_tsne.fit_transform(total_X, old_num_points=target_number, join_times=2, init_for_old=sample_Y)
+    sklearn_init = np.random.random((n_objects, 2))
+    sklearn_init[:target_number] = sample_Y
+    sklearn_total_Y = sklearn_tsne.fit_transform(total_X)
+
     plot(total_Y, total_label, 'total.png')
+    plot(sklearn_total_Y, total_label, 'sklearn-total.png')
 
     # filename = 'mnist_tsne_n_comp=%d.png' % args.n_components
     # np.savetxt('pos.txt', mnist_tsne)
@@ -119,8 +132,5 @@ def pre_main():
 
 
 
-from MulticoreTSNE import WeightAssign as wa
-a = np.array([[0,0,0],[1,1,1],[2,2,2],[3,3,3.0]])
-b = np.array([[0,0,1],[3,3,4.0]])
-c = wa(1)
-c.assign(a, b)
+from MulticoreTSNE import IncrementalMulticoreTSNE as incre_tsne
+pre_main()

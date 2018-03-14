@@ -23,9 +23,15 @@ public:
     void run(double* X, int N, int D, double* Y,
                int no_dims = 2, double perplexity = 30, double theta = .5,
                int num_threads = 1, int max_iter = 1000, int random_state = 0,
-               bool init_from_Y = false, int verbose = 0,
+               int verbose = 0,
                double early_exaggeration = 12, double learning_rate = 200,
                double *final_error = NULL, int skip_num_points = 0, int skip_iter = 0);
+    void incremental_run(double* X, int N, int D, double* Y,
+               int no_dims = 2, double perplexity = 30, double theta = .5,
+               int num_threads = 1, int max_iter = 1000, int random_state = 0,
+               int verbose = 0,
+               double early_exaggeration = 12, double learning_rate = 200,
+               double *final_error = NULL, int old_num_points = 0, int join_times = 1);
     void symmetrizeMatrix(int** row_P, int** col_P, double** val_P, int N);
 private:
     double computeGradient(int* inp_row_P, int* inp_col_P, double* inp_val_P, double* Y, int N, int D, double* dC, double theta, bool eval_error);

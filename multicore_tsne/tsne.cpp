@@ -74,6 +74,177 @@ void TSNE<treeT, dist_fn>::assign_weight(double* source_X, int source_N, double*
     return;
 }
 
+
+/*
+    Perform incremental t-SNE
+        X -- double matrix of size [N, D]
+        D -- input dimensionality
+        Y -- array to fill with the result of size [N, no_dims]
+        no_dims -- target dimentionality
+        old_num_points -- number of the old points
+        join_times -- times for new points to join
+*/
+template <class treeT, double (*dist_fn)( const DataPoint&, const DataPoint&)>
+void TSNE<treeT, dist_fn>::incremental_run(double* X, int N, int D, double* Y,
+               int no_dims, double perplexity, double theta ,
+               int num_threads, int max_iter, int random_state,
+               int verbose,
+               double early_exaggeration, double learning_rate,
+               double *final_error, int old_num_points, int join_times) {
+
+    if (N - 1 < 3 * perplexity) {
+        perplexity = (N - 1) / 3;
+        if (verbose)
+            fprintf(stderr, "Perplexity too large for the number of data points! Adjusting ...\n");
+    }
+
+#ifdef _OPENMP
+    omp_set_num_threads(NUM_THREADS(num_threads));
+#if _OPENMP >= 200805
+    omp_set_schedule(omp_sched_guided, 0);
+#endif
+#endif
+
+    /*
+        ======================
+            Step 1
+        ======================
+    */
+
+    if (verbose)
+        fprintf(stderr, "Using no_dims = %d, perplexity = %f, and theta = %f\n", no_dims, perplexity, theta);
+
+    // Set learning parameters
+    float total_time = .0;
+    time_t start, end;
+    int stop_lying_iter = 250, mom_switch_iter = 250;
+    double momentum = .5, final_momentum = .8;
+    double eta = learning_rate;
+
+    // Allocate some memory
+    double* dY    = (double*) malloc(N * no_dims * sizeof(double));
+    double* uY    = (double*) calloc(N * no_dims , sizeof(double));
+    double* gains = (double*) malloc(N * no_dims * sizeof(double));
+    if (dY == NULL || uY == NULL || gains == NULL) { fprintf(stderr, "Memory allocation failed!\n"); exit(1); }
+    for (int i = 0; i < N * no_dims; i++) {
+        gains[i] = 1.0;
+    }
+
+    // Normalize input data (to prevent numerical problems)
+    if (verbose)
+        fprintf(stderr, "Computing input similarities...\n");
+
+    start = time(0);
+    zeroMean(X, N, D);
+    double max_X = .0;
+    for (int i = 0; i < N * D; i++) {
+        if (X[i] > max_X) max_X = X[i];
+    }
+    for (int i = 0; i < N * D; i++) {
+        X[i] /= max_X;
+    }
+
+    // Compute input similarities
+    int* row_P; int* col_P; double* val_P;
+
+    // Compute asymmetric pairwise input similarities
+    computeGaussianPerplexity(X, N, D, &row_P, &col_P, &val_P, perplexity, (int) (3 * perplexity), verbose);
+
+    // Symmetrize input similarities
+    symmetrizeMatrix(&row_P, &col_P, &val_P, N);
+    double sum_P = .0;
+    for (int i = 0; i < row_P[N]; i++) {
+        sum_P += val_P[i];
+    }
+    for (int i = 0; i < row_P[N]; i++) {
+        val_P[i] /= sum_P;
+    }
+
+    end = time(0);
+    if (verbose)
+        fprintf(stderr, "Done in %4.2f seconds (sparsity = %f)!\nLearning embedding...\n", (float)(end - start) , (double) row_P[N] / ((double) N * (double) N));
+
+    /*
+        ======================
+            Step 2
+        ======================
+    */
+
+
+    // Lie about the P-values
+    for (int i = 0; i < row_P[N]; i++) {
+        val_P[i] *= early_exaggeration;
+    }
+
+    // Perform main training loop
+    start = time(0);
+    int join_count = 0, iter_per_join = int(max_iter / join_times), new_num_points = N - old_num_points;
+    fprintf(stderr, " join_count: %d;\n iter_per_join: %d\n new_num_points: %d\n", join_count, iter_per_join, new_num_points);
+    for (int iter = 0; iter < max_iter; iter++) {
+
+        bool need_eval_error = (verbose && ((iter > 0 && iter % 50 == 0) || (iter == max_iter - 1)));
+
+        // Compute approximate gradient
+        double error = computeGradient(row_P, col_P, val_P, Y, N, no_dims, dY, theta, need_eval_error);
+
+        if (iter == join_count * iter_per_join) {
+            join_count++;
+        }
+        for (int i = 0; i < (old_num_points + int(new_num_points * join_count / join_times)) * no_dims; i++) {
+            // Update gains
+            gains[i] = (sign(dY[i]) != sign(uY[i])) ? (gains[i] + .2) : (gains[i] * .8 + .01);
+
+            // Perform gradient update (with momentum and gains)
+            uY[i] = momentum * uY[i] - eta * gains[i] * dY[i];
+            Y[i] = Y[i] + uY[i];
+        }
+
+        // Make solution zero-mean
+        zeroMean(Y, N, no_dims);
+
+        // Stop lying about the P-values after a while, and switch momentum
+        if (iter == stop_lying_iter) {
+            for (int i = 0; i < row_P[N]; i++) {
+                val_P[i] /= early_exaggeration;
+            }
+        }
+        if (iter == mom_switch_iter) {
+            momentum = final_momentum;
+        }
+
+        // Print out progress
+        if (need_eval_error) {
+            end = time(0);
+
+            if (iter == 0)
+                fprintf(stderr, "Iteration %d: error is %f\n", iter + 1, error);
+            else {
+                total_time += (float) (end - start);
+                fprintf(stderr, "Iteration %d: error is %f (50 iterations in %4.2f seconds)\n", iter + 1, error, (float) (end - start) );
+            }
+            start = time(0);
+        }
+
+    }
+    end = time(0); total_time += (float) (end - start) ;
+
+    if (final_error != NULL)
+        *final_error = evaluateError(row_P, col_P, val_P, Y, N, no_dims, theta);
+
+    // Clean up memory
+    free(dY);
+    free(uY);
+    free(gains);
+
+    free(row_P); row_P = NULL;
+    free(col_P); col_P = NULL;
+    free(val_P); val_P = NULL;
+
+    if (verbose)
+        fprintf(stderr, "Fitting performed in %4.2f seconds.\n", total_time);
+}
+
+
 /*  
     Perform t-SNE
         X -- double matrix of size [N, D]
@@ -85,7 +256,7 @@ template <class treeT, double (*dist_fn)( const DataPoint&, const DataPoint&)>
 void TSNE<treeT, dist_fn>::run(double* X, int N, int D, double* Y,
                int no_dims, double perplexity, double theta ,
                int num_threads, int max_iter, int random_state,
-               bool init_from_Y, int verbose,
+               int verbose,
                double early_exaggeration, double learning_rate,
                double *final_error, int skip_num_points, int skip_iter) {
 
@@ -171,16 +342,6 @@ void TSNE<treeT, dist_fn>::run(double* X, int N, int D, double* Y,
     // Lie about the P-values
     for (int i = 0; i < row_P[N]; i++) {
         val_P[i] *= early_exaggeration;
-    }
-
-    // Initialize solution (randomly), unless Y is already initialized
-    if (!init_from_Y) {
-        if (random_state != -1) {
-            srand(random_state);
-        }
-        for (int i = skip_num_points * no_dims; i < N * no_dims; i++) {
-            Y[i] = randn();
-        }
     }
 
     // Perform main training loop
@@ -651,7 +812,7 @@ extern "C"
     extern void tsne_run_double(double* X, int N, int D, double* Y,
                                 int no_dims = 2, double perplexity = 30, double theta = .5,
                                 int num_threads = 1, int max_iter = 1000, int random_state = -1,
-                                bool init_from_Y = false, int verbose = 0,
+                                int verbose = 0,
                                 double early_exaggeration = 12, double learning_rate = 200,
                                 double *final_error = NULL, int distance = 1, int skip_num_points = 0,
                                 int skip_iter = 0)
@@ -661,12 +822,37 @@ extern "C"
         if (distance == 0) {
             TSNE<SplitTree, euclidean_distance> tsne;
             tsne.run(X, N, D, Y, no_dims, perplexity, theta, num_threads, max_iter, random_state,
-                     init_from_Y, verbose, early_exaggeration, learning_rate, final_error, skip_num_points, skip_iter);
+                     verbose, early_exaggeration, learning_rate, final_error, skip_num_points, skip_iter);
         }
         else {
             TSNE<SplitTree, euclidean_distance_squared> tsne;
             tsne.run(X, N, D, Y, no_dims, perplexity, theta, num_threads, max_iter, random_state,
-                     init_from_Y, verbose, early_exaggeration, learning_rate, final_error, skip_num_points, skip_iter);
+                     verbose, early_exaggeration, learning_rate, final_error, skip_num_points, skip_iter);
+        }
+    }
+
+    #ifdef _WIN32
+    __declspec(dllexport)
+    #endif
+    extern void incremental_tsne_run_double(double* X, int N, int D, double* Y,
+                                int no_dims = 2, double perplexity = 30, double theta = .5,
+                                int num_threads = 1, int max_iter = 1000, int random_state = -1,
+                                int verbose = 0,
+                                double early_exaggeration = 12, double learning_rate = 200,
+                                double *final_error = NULL, int distance = 1, int old_num_points = 0,
+                                int join_times = 1)
+    {
+        if (verbose)
+            fprintf(stderr, "Performing incremental t-SNE using %d cores.\n", NUM_THREADS(num_threads));
+        if (distance == 0) {
+            TSNE<SplitTree, euclidean_distance> tsne;
+            tsne.incremental_run(X, N, D, Y, no_dims, perplexity, theta, num_threads, max_iter, random_state,
+                     verbose, early_exaggeration, learning_rate, final_error, old_num_points, join_times);
+        }
+        else {
+            TSNE<SplitTree, euclidean_distance_squared> tsne;
+            tsne.incremental_run(X, N, D, Y, no_dims, perplexity, theta, num_threads, max_iter, random_state,
+                     verbose, early_exaggeration, learning_rate, final_error, old_num_points, join_times);
         }
     }
 
