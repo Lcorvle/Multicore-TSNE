@@ -1,3 +1,0 @@
-C:/Users/Lcorvle/Desktop/laboratory/Multicore-TSNE/build/temp.win32-3.6/Release/CMakeFiles/tsne_multicore.dir
-C:/Users/Lcorvle/Desktop/laboratory/Multicore-TSNE/build/temp.win32-3.6/Release/CMakeFiles/ALL_BUILD.dir
-C:/Users/Lcorvle/Desktop/laboratory/Multicore-TSNE/build/temp.win32-3.6/Release/CMakeFiles/ZERO_CHECK.dir
